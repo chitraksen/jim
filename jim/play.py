@@ -1,9 +1,3 @@
-"""
-NOTE: I KNOW THIS SCRIPT HAS A BUNCH OF DUPLICATED CODE BUT THIS JUST MAKES THE
-GAMES RUN BETTER IF I CAN HANDLE ALL THE DATA CREATION/MODIFICATION IN A SINGLE
-BLOCK. AND ALSO EASIER TO HANDLE MINUTE DIFFERENCES IN THE GAMES.
-"""
-
 import sys
 import time
 
@@ -13,156 +7,142 @@ import numpy as np
 import pygame
 
 
-def init_pygame(width, height):
-    pygame.init()
-    screen = pygame.display.set_mode(size=(width, height))
-    clock = pygame.time.Clock()
-    return screen, clock
+class GamePlayer:
+    def __init__(
+        self,
+        env: gym.Env,
+        height: int,
+        width: int,
+        scale: int,
+        tick: int,
+        action_mapping,
+        prevent_multi_keypress: bool = False,
+        start_paused: bool = True,
+    ):
+        self.env = env
+        self.height = height
+        self.width = width
+        self.scale = scale
+        self.tick = tick
+        self.action_mapping = action_mapping
+        self.prevent_multi_keypress = prevent_multi_keypress
+        self.start_paused = start_paused
 
+        # reset env just in case it hasn't been done already
+        self.env.reset()
+        self.initPygame()
 
-def render_game(env, screen, clock, height, width, scale, tick):
-    rgb_array = env.render()
-    if rgb_array is not None:
-        rgb_surface = pygame.surfarray.make_surface(rgb_array.swapaxes(0, 1))
-        scaled_surface = pygame.transform.scale(
-            rgb_surface, (width * scale, height * scale)
+    def initPygame(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode(
+            size=(self.width * self.scale, self.height * self.scale)
         )
-        screen.blit(scaled_surface, (0, 0))
-        pygame.display.flip()
-        clock.tick(tick)
+        self.clock = pygame.time.Clock()
 
+    def renderGame(self):
+        rgb_array = self.env.render()
+        if rgb_array is not None:
+            rgb_surface = pygame.surfarray.make_surface(rgb_array.swapaxes(0, 1))
+            scaled_surface = pygame.transform.scale(
+                rgb_surface, (self.width * self.scale, self.height * self.scale)
+            )
+            self.screen.blit(scaled_surface, (0, 0))
+            pygame.display.flip()
+            self.clock.tick(self.tick)
 
-def pause_game():
-    paused = True
-    while paused:
-        # if key pressed, break out of pause loop
-        for event in pygame.event.get():
-            if event.type == pygame.KEYDOWN:
-                paused = False
+    def pauseGame(self):
+        paused = True
+        while paused:
+            # if key pressed, break out of pause loop
+            for event in pygame.event.get():
+                if event.type == pygame.KEYDOWN:
+                    paused = False
+                    continue
+
+    def play(self):
+        running = True
+        total_reward = 0.0
+        reward = 0
+
+        # game paused till first key press
+        self.renderGame()
+        if self.start_paused:
+            self.pauseGame()
+
+        # game loop
+        while running:
+            for event in pygame.event.get():
+                if event.type in [pygame.QUIT, pygame.K_ESCAPE]:
+                    self.env.close()
+                    return
+
+            # get key states and find corresponding actions
+            keys = pygame.key.get_pressed()
+            action = self.action_mapping(keys)
+            if action is None:
                 continue
 
+            observation, reward, terminated, truncated, info = self.env.step(action)
+            total_reward += reward
 
-def cart_pole(width=600, height=400, scale=2):
+            self.renderGame()
+            # sleep for a short time to not register a key multiple times
+            if self.prevent_multi_keypress:
+                time.sleep(0.2)
+
+            if terminated or truncated:
+                running = False
+
+        self.env.close()
+        pygame.quit()
+        print(f"Total reward: {total_reward}")
+        print(f"Final reward: {reward}")
+
+
+def play_cartpole():
     env = gym.make("CartPole-v1", render_mode="rgb_array")
-    observation, info = env.reset()
 
-    screen, clock = init_pygame(width * scale, height * scale)
-    running = True
-    total_reward = 0.0
-    reward = 0
-
-    # game paused till first key press
-    render_game(env, screen, clock, height, width, scale, tick=1)
-    pause_game()
-
-    # game loop
-    while running:
-        for event in pygame.event.get():
-            if event.type in [pygame.QUIT, pygame.K_ESCAPE]:
-                env.close()
-                return
-
-        # get key states
-        keys = pygame.key.get_pressed()
-
-        # convert key to action
+    def keyToAction(keys):
         if keys[pygame.K_LEFT]:
             action = np.int64(0)
         elif keys[pygame.K_RIGHT]:
             action = np.int64(1)
         else:
             action = env.action_space.sample()
+        return action
 
-        observation, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
-
-        render_game(env, screen, clock, height, width, scale, tick=15)
-
-        if terminated or truncated:
-            running = False
-
-    env.close()
-    pygame.quit()
-    print(f"Total reward: {total_reward}")
-    print(f"Final reward: {reward}")
+    game = GamePlayer(
+        env, width=600, height=400, scale=2, tick=15, action_mapping=keyToAction
+    )
+    game.play()
 
 
-def lunar_lander(width=600, height=400, scale=2):
+def play_lunar():
     env = gym.make("LunarLander-v3", continuous=True, render_mode="rgb_array")
-    observation, info = env.reset()
-    action = np.array([0.0, 0.0], dtype=np.float32)
 
-    screen, clock = init_pygame(width * scale, height * scale)
-    running = True
-    total_reward = 0.0
-    reward = 0
-
-    # game paused till first key press
-    render_game(env, screen, clock, height, width, scale, tick=1)
-    pause_game()
-
-    # game loop
-    while running:
-        for event in pygame.event.get():
-            if event.type in [pygame.QUIT, pygame.K_ESCAPE]:
-                env.close()
-                return
-
-        # get key states
-        keys = pygame.key.get_pressed()
-
-        # convert key to action
+    def keyToAction(keys):
         if keys[pygame.K_LEFT]:
             lateral = -1
         elif keys[pygame.K_RIGHT]:
             lateral = 1
         else:
             lateral = 0
-
         if keys[pygame.K_UP]:
             engine = 1
         else:
             engine = 0
+        return [engine, lateral]
 
-        action = [engine, lateral]
-        observation, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
-
-        render_game(env, screen, clock, height, width, scale, tick=30)
-
-        if terminated or truncated:
-            running = False
-
-    env.close()
-    pygame.quit()
-    print(f"Total reward: {total_reward}")
-    print(f"Final reward: {reward}")
+    game = GamePlayer(
+        env, width=600, height=400, scale=2, tick=30, action_mapping=keyToAction
+    )
+    game.play()
 
 
-def car_racing(width=600, height=400, scale=2):
+def play_racing():
     env = gym.make("CarRacing-v3", continuous=False, render_mode="rgb_array")
-    observation, info = env.reset()
 
-    screen, clock = init_pygame(width * scale, height * scale)
-    running = True
-    total_reward = 0.0
-    reward = 0
-
-    # game paused till first key press
-    render_game(env, screen, clock, height, width, scale, tick=1)
-    pause_game()
-
-    # game loop
-    while running:
-        for event in pygame.event.get():
-            if event.type in [pygame.QUIT, pygame.K_ESCAPE]:
-                env.close()
-                return
-
-        # get key states
-        keys = pygame.key.get_pressed()
-
-        # convert key to action
+    def keyToAction(keys):
         if keys[pygame.K_RIGHT]:
             action = np.int64(1)
         elif keys[pygame.K_LEFT]:
@@ -173,45 +153,18 @@ def car_racing(width=600, height=400, scale=2):
             action = np.int64(4)
         else:
             action = np.int64(0)
+        return action
 
-        observation, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
-
-        render_game(env, screen, clock, height, width, scale, tick=30)
-
-        if terminated or truncated:
-            running = False
-
-    env.close()
-    pygame.quit()
-    print(f"Total reward: {total_reward}")
-    print(f"Final reward: {reward}")
+    game = GamePlayer(
+        env, width=600, height=400, scale=2, tick=30, action_mapping=keyToAction
+    )
+    game.play()
 
 
-def taxi(width=550, height=350, scale=2):
+def play_taxi():
     env = gym.make("Taxi-v3", render_mode="rgb_array")
-    observation, info = env.reset()
 
-    screen, clock = init_pygame(width * scale, height * scale)
-    running = True
-    total_reward = 0.0
-    reward = 0
-
-    # render initial state. game does nothing if not key presses so it'll stay
-    # stuck on this frame
-    render_game(env, screen, clock, height, width, scale, tick=30)
-
-    # game loop
-    while running:
-        for event in pygame.event.get():
-            if event.type in [pygame.QUIT, pygame.K_ESCAPE]:
-                env.close()
-                return
-
-        # get key states
-        keys = pygame.key.get_pressed()
-
-        # convert key to action
+    def keyToAction(keys):
         if keys[pygame.K_DOWN]:
             action = np.int64(0)
         elif keys[pygame.K_UP]:
@@ -225,46 +178,26 @@ def taxi(width=550, height=350, scale=2):
         elif keys[pygame.K_2]:
             action = np.int64(5)
         else:
-            continue
+            action = None
+        return action
 
-        observation, reward, terminated, truncated, info = env.step(action)
-        # sleep timer to not register multiple keypresses randomly
-        # extra key presses matter a lot for this game
-        time.sleep(0.2)
-        total_reward += reward
-
-        render_game(env, screen, clock, height, width, scale, tick=30)
-
-        if terminated or truncated:
-            running = False
-
-    env.close()
-    pygame.quit()
-    print(f"Total reward: {total_reward}")
-    print(f"Final reward: {reward}")
+    game = GamePlayer(
+        env,
+        width=550,
+        height=350,
+        scale=2,
+        tick=30,
+        prevent_multi_keypress=True,
+        action_mapping=keyToAction,
+    )
+    game.play()
 
 
-def pacman(width=250, height=160, scale=4):
+def play_pacman():
     gym.register_envs(ale_py)
     env = gym.make("ALE/Pacman-v5", obs_type="rgb", render_mode="rgb_array")
-    observation, info = env.reset()
 
-    screen, clock = init_pygame(width * scale, height * scale)
-    running = True
-    total_reward = 0.0
-    reward = 0
-
-    # game loop
-    while running:
-        for event in pygame.event.get():
-            if event.type in [pygame.QUIT, pygame.K_ESCAPE]:
-                env.close()
-                return
-
-        # get key states
-        keys = pygame.key.get_pressed()
-
-        # convert key to action
+    def keyToAction(keys):
         if keys[pygame.K_UP]:
             action = np.int64(1)
         elif keys[pygame.K_RIGHT]:
@@ -275,34 +208,27 @@ def pacman(width=250, height=160, scale=4):
             action = np.int64(4)
         else:
             action = np.int64(0)
+        return action
 
-        observation, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
-
-        render_game(env, screen, clock, height, width, scale, tick=30)
-
-        if terminated or truncated:
-            running = False
-
-    env.close()
-    pygame.quit()
-    print(f"Total reward: {total_reward}")
-    print(f"Final reward: {reward}")
+    game = GamePlayer(
+        env, width=210, height=160, scale=4, tick=30, action_mapping=keyToAction
+    )
+    game.play()
 
 
 def play(game):
     """Entry point for playing different games."""
     match game:
         case "cartpole":
-            cart_pole()
+            play_cartpole()
         case "lunar":
-            lunar_lander()
+            play_lunar()
         case "racing":
-            car_racing()
+            play_racing()
         case "taxi":
-            taxi()
+            play_taxi()
         case "pacman":
-            pacman()
+            play_pacman()
         case _:
             print("Game not recognised, exiting.")
             sys.exit(1)
